@@ -41,35 +41,6 @@ func handleConn(ctx context.Context, forwardToAddr *net.TCPAddr,
 	forwardToConn.Close()
 }
 
-func run(ctx context.Context, listenAt, forwardTo string, logger logger) error {
-	forwardToAddr, err := net.ResolveTCPAddr("tcp", forwardTo)
-	if err != nil {
-		return err
-	}
-
-	listenAtAddr, err := net.ResolveTCPAddr("tcp", listenAt)
-	if err != nil {
-		return err
-	}
-
-	listener, err := net.ListenTCP("tcp", listenAtAddr)
-	if err != nil {
-		return err
-	}
-
-	// listen for connections
-	logger.info.Printf("forwarding connections to: %v\n", forwardToAddr)
-	logger.info.Printf("listening for connection at: %v\n", listenAtAddr)
-	for {
-		clientConn, err := listener.AcceptTCP()
-		if err != nil {
-			return err
-		}
-		logger.info.Printf("receieved connection from: %v\n", clientConn.RemoteAddr())
-		go handleConn(ctx, forwardToAddr, clientConn, logger)
-	}
-}
-
 func main() {
 	// config
 	listenAt := ":8000"
@@ -86,24 +57,51 @@ func main() {
 		err:  log.New(os.Stdout, "ERROR: ", log.Ltime|log.Lmsgprefix),
 	}
 
+	// resolve addresses
+	forwardToAddr, err := net.ResolveTCPAddr("tcp", forwardTo)
+	if err != nil {
+		logger.err.Fatal(err)
+	}
+
+	listenAtAddr, err := net.ResolveTCPAddr("tcp", listenAt)
+	if err != nil {
+		logger.err.Fatal(err)
+	}
+
+	logger.info.Printf("forwarding connections to: %v\n", forwardToAddr)
+	logger.info.Printf("listening for connection at: %v\n", listenAtAddr)
+
+	// create listener
+	listener, err := net.ListenTCP("tcp", listenAtAddr)
+	if err != nil {
+		logger.err.Fatal(err)
+	}
+
 	// ctx
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// listen to signal
+	// handle close signal
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigs
-		cancel()
 		logger.info.Printf("received signal: %s\n", sig.String())
+		cancel()
+		listener.Close()
 	}()
 
-	// run
-	err := run(ctx, listenAt, forwardTo, logger)
-	if err != nil {
-		logger.err.Fatal("on run", err)
+	// listen for connections
+loop:
+	for {
+		clientConn, err := listener.AcceptTCP()
+		if err != nil {
+			logger.err.Println(err)
+			break loop
+		}
+		logger.info.Printf("receieved connection from: %v\n", clientConn.RemoteAddr())
+		go handleConn(ctx, forwardToAddr, clientConn, logger)
 	}
 
-	<-ctx.Done()
+	cancel()
 	logger.info.Println("exit")
 }
