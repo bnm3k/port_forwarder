@@ -10,6 +10,8 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+
+	flag "github.com/spf13/pflag"
 )
 
 type logger struct {
@@ -60,19 +62,27 @@ func pipe(ctx context.Context, forwardToConn *net.TCPConn,
 }
 
 func main() {
-	// config
-	listenAt := ":8000"
-	forwardTo := "localhost:9000"
+	// logger
+	logger := logger{
+		info: log.New(os.Stdout, "INFO: ", log.Ltime|log.Lmsgprefix),
+		err:  log.New(os.Stdout, "ERROR: ", log.Ltime|log.Lmsgprefix),
+	}
+	// defaults
+	listenAt := "localhost:8000"
+	forwardTo := ""
 	verbose := true
 
-	// logger
-	infoOut := ioutil.Discard
-	if verbose {
-		infoOut = os.Stdout
+	// get cli args
+	flag.BoolVarP(&verbose, "verbose", "v", true, "Verbose")
+	flag.StringVarP(&listenAt, "listen-at", "l", listenAt, "Address to listen at incoming connections")
+	flag.StringVarP(&forwardTo, "forward-to", "f", "", "Address to forward incoming connections")
+	flag.Parse()
+
+	if !verbose {
+		logger.info.SetOutput(ioutil.Discard)
 	}
-	logger := logger{
-		info: log.New(infoOut, "INFO: ", log.Ltime|log.Lmsgprefix),
-		err:  log.New(os.Stdout, "ERROR: ", log.Ltime|log.Lmsgprefix),
+	if forwardTo == "" {
+		logger.err.Fatal("arg `forward-to` for the address to forward to is empty")
 	}
 
 	// resolve addresses
